@@ -31,7 +31,8 @@ class GameManager {
   async initLobby(chatId) {
     const g = this.getGame(chatId);
     g.state = 'lobby';
-    const names = g.players.map(p => p.name).join(', ') || '—';
+    const names = g.players.map(p => p.name).join('
+') || '—';
     const text = `🎲 Лобби «Лживый Гений»
 Игроки (${g.players.length}): ${names}`;
     const buttons = [
