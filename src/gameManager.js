@@ -11,18 +11,10 @@ class GameManager {
   getGame(chatId) {
     if (!this.games.has(chatId)) {
       this.games.set(chatId, {
-        players: [],
-        scores: {},
-        lobbyMessageId: null,
-        round: 0,
-        currentLiar: null,
-        state: 'lobby',
-        answers: {},
-        votes: {},
-        honestQ: null,
-        liarQ: null,
-        votingMessageId: null,
-        resultMessageId: null
+        players: [], scores: {}, lobbyMessageId: null,
+        round: 0, currentLiar: null,
+        state: 'lobby', answers: {}, votes: {}, honestQ: null,
+        voterMessageId: null, resultMessageId: null
       });
     }
     return this.games.get(chatId);
@@ -63,9 +55,7 @@ class GameManager {
     delete g.scores[user.id];
   }
 
-  async updateLobby(chatId) {
-    await this.initLobby(chatId);
-  }
+  async updateLobby(chatId) { return this.initLobby(chatId); }
 
   async startGame(chatId) {
     const g = this.getGame(chatId);
@@ -78,7 +68,7 @@ class GameManager {
       g.lobbyMessageId = null;
     }
     g.round = 1;
-    await this.runRound(chatId);
+    return this.runRound(chatId);
   }
 
   async runRound(chatId) {
@@ -92,17 +82,14 @@ class GameManager {
     g.answers = {};
     g.votes = {};
     g.honestQ = randomItem(questions);
-    do {
-      g.liarQ = randomItem(questions);
-    } while (g.liarQ === g.honestQ);
+    do { g.liarQ = randomItem(questions); } while (g.liarQ === g.honestQ);
 
     for (const p of g.players) {
-      const text = p.id === g.currentLiar.id
+      const privateText = p.id === g.currentLiar.id
         ? `🕵️‍♂️ Ты — Лжец! Вопрос: ${g.liarQ}`
         : `❓ Раунд ${g.round}. Вопрос: ${g.honestQ}`;
-      await this.bot.telegram.sendMessage(p.id, text);
+      await this.bot.telegram.sendMessage(p.id, privateText);
     }
-
     setTimeout(() => this.startVoting(chatId), 60000);
   }
 
@@ -123,12 +110,13 @@ class GameManager {
       try { await this.bot.telegram.deleteMessage(chatId, g.lobbyMessageId); } catch {};
       g.lobbyMessageId = null;
     }
-    const buttons = g.players.map(p => Markup.button.callback(`👤 ${p.name} (0)`, `vote_${p.id}`));
-    const lines = g.players.map(p => `• ${p.name}: "${g.answers[p.id] || '—'}"`).join('\n');
-    const intro = `🗳️ Раунд ${g.round} — голосование!\n❓ Вопрос: ${g.honestQ}\n📝 Ответы:\n${lines}`;
-    const msg = await this.bot.telegram.sendMessage(chatId, intro, { reply_markup: { inline_keyboard: [buttons] } });
+    const voteButtons = g.players.map(p => Markup.button.callback(`👤 ${p.name} (0)`, `vote_${p.id}`));
+    const answersDisplay = g.players.map(p => `• ${p.name}: "${g.answers[p.id] || '—'}"`).join('\n');
+    const intro =
+      `🗳️ Раунд ${g.round} — голосование!\n` +
+      `❓ Вопрос: ${g.honestQ}\n📝 Ответы:\n${answersDisplay}`;
+    const msg = await this.bot.telegram.sendMessage(chatId, intro, { reply_markup: { inline_keyboard: [voteButtons] } });
     g.votingMessageId = msg.message_id;
-
     setTimeout(() => {
       if (g.votingMessageId) {
         try { this.bot.telegram.deleteMessage(chatId, g.votingMessageId); } catch {};
@@ -144,8 +132,8 @@ class GameManager {
       g.votes[voterId] = votedId;
       const counts = {};
       Object.values(g.votes).forEach(v => counts[v] = (counts[v] || 0) + 1);
-      const buttons = g.players.map(p => Markup.button.callback(`👤 ${p.name} (${counts[p.id] || 0})`, `vote_${p.id}`));
-      await this.bot.telegram.editMessageReplyMarkup(chatId, g.votingMessageId, null, { inline_keyboard: [buttons] });
+      const updatedButtons = g.players.map(p => Markup.button.callback(`👤 ${p.name} (${counts[p.id] || 0})`, `vote_${p.id}`));
+      await this.bot.telegram.editMessageReplyMarkup(chatId, g.votingMessageId, null, { inline_keyboard: [updatedButtons] });
     }
     if (Object.keys(g.votes).length >= g.players.length) {
       await this.finishVoting(chatId);
@@ -156,50 +144,29 @@ class GameManager {
     const g = this.getGame(chatId);
     if (g.state !== 'vote') return;
     g.state = 'lobby';
-    if (g.votingMessageId) {
-      try { await this.bot.telegram.deleteMessage(chatId, g.votingMessageId); } catch {};
-      g.votingMessageId = null;
-    }
-    const counts = {}; Object.values(g.votes).forEach(v => counts[v] = (counts[v] || 0) + 1);
+    if (g.votingMessageId) { try { await this.bot.telegram.deleteMessage(chatId, g.votingMessageId); } catch {}; g.votingMessageId = null; }
+    const counts = {};
+    Object.values(g.votes).forEach(v => counts[v] = (counts[v] || 0) + 1);
     const correctVotes = counts[g.currentLiar.id] || 0;
     const total = g.players.length;
     const majority = correctVotes > total / 2;
-
-    // Детективы
-    for (const p of g.players) {
+    g.players.forEach(p => {
       if (g.votes[p.id] === String(g.currentLiar.id)) {
-        let pts = 3;
-        if (correctVotes === 1) pts = 5;
-        else if (majority) pts += 1;
+        let pts = 3; if (correctVotes===1) pts=5; else if (majority) pts+=1;
         g.scores[p.id] += pts;
       }
-    }
-    // Лжец
-    for (const p of g.players) {
-      if (p.id === g.currentLiar.id) {
-        let pts = 0;
-        if (correctVotes === 0) pts = 6;
-        else if (correctVotes < total / 2) pts = 3;
-        else if (correctVotes === total) pts = -1;
-        g.scores[p.id] += pts;
+      if (p.id===g.currentLiar.id) {
+        let pts=0; if (correctVotes===0) pts=6; else if (correctVotes<total/2) pts=3; else if (correctVotes===total) pts=-1;
+        g.scores[p.id]+=pts;
       }
-    }
-    const board = g.players.map(p => `• ${p.name}: ${g.scores[p.id]} очков (голосов: ${counts[p.id] || 0})`).join('\n');
-    const liarLine =
-      correctVotes === 0 ? '🤥 Лжец не пойман, получает +6' :
-      correctVotes < total / 2 ? '🤥 Лжец частично раскрыт, получает +3' :
-      correctVotes === total ? '🤥 Лжец полностью раскрыт, получает -1' :
-      '🤥 Лжец ускользнул, получает 0';
-    const resultText = [`🏁 Итоги раунда ${g.round}:`, `Лжец: ${g.currentLiar.name}`, liarLine, `\n📊 Счёт:\n${board}`].join('\n');
+    });
+    const board = g.players.map(p=>`• ${p.name}: ${g.scores[p.id]} очков (${counts[p.id]||0})`).join('\n');
+    const liarLine = correctVotes===0?'🤥 Лжец не пойман(+6)':correctVotes<total/2?'🤥 Частично(+3)':correctVotes===total?'🤥 Полностью(-1)':'🤥 Ускользнул(0)';
+    const resultText = `🏁 Итоги раунда ${g.round}:\nЛжец: ${g.currentLiar.name}\n${liarLine}\n\n📊 Счёт:\n${board}`;
     const msg = await this.bot.telegram.sendMessage(chatId, resultText);
     g.resultMessageId = msg.message_id;
-    if (g.round < this.maxRounds) {
-      g.round++;
-      setTimeout(() => this.runRound(chatId), 5000);
-    } else {
-      await this.bot.telegram.sendMessage(chatId, `🎉 Игра окончена! Финальные результаты:\n${board}`);
-      this.games.delete(chatId);
-    }
+    if (g.round<this.maxRounds) { g.round++; setTimeout(()=>this.runRound(chatId),5000); }
+    else { await this.bot.telegram.sendMessage(chatId, `🎉 Игра окончена! Финал:\n${board}`); this.games.delete(chatId); }
   }
 }
 
