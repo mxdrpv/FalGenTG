@@ -1,36 +1,22 @@
 const { Telegraf } = require('telegraf');
 const { handleCommands } = require('./commands');
-const { GameManager } = require('./gameManager');
-const express = require('express');
+const 
+{ GameManager } = require('./gameManager');
 require('dotenv').config();
 
-const TOKEN = process.env.BOT_TOKEN;
-const DOMAIN = process.env.DOMAIN; // e.g. https://your-app.onrender.com
-const PORT = process.env.PORT || 3000;
-
 // Инициализация бота
-const bot = new Telegraf(TOKEN);
+const bot = new Telegraf(process.env.BOT_TOKEN);
 const gameManager = new GameManager(bot);
 handleCommands(bot, gameManager);
 
-// Webhook setup вместо long-polling
+// Запуск long-polling
+bot.launch()
+  .then(() => console.log('✅ Bot started (long-polling)'))
+  .catch(console.error);
+
+// Health-check сервер для Render
+const express = require('express');
 const app = express();
-
-// Обработка запросов от Telegram
-app.use(bot.webhookCallback(`/bot${TOKEN}`));
-
-// Health-check для Render
-app.get('/', (req, res) => res.send('Bot is running'));
-
-// Устанавливаем вебхук в Telegram
-(async () => {
-  try {
-    await bot.telegram.setWebhook(`${DOMAIN}/bot${TOKEN}`);
-    console.log(`Webhook set to ${DOMAIN}/bot${TOKEN}`);
-  } catch (err) {
-    console.error('Error setting webhook:', err);
-  }
-})();
-
-// Запуск HTTP-сервера
-app.listen(PORT, () => console.log(`Express server listening on ${PORT}`));
+app.get('/', (req, res) => res.send('OK'));
+const port = process.env.PORT || 3000;
+app.listen(port, () => console.log(`🌐 Health-check listening on port ${port}`));
